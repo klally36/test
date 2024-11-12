@@ -3,7 +3,15 @@ from transformers import pipeline
 from textblob import TextBlob
 import re
 
-# Initialize NLP Models
+# Set the page configuration first
+st.set_page_config(
+    page_title="💬 Mental Health Chatbot",
+    page_icon="💬",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# Initialize NLP Models with caching to improve performance
 @st.cache_resource
 def load_models():
     chatbot = pipeline("conversational", model="microsoft/DialoGPT-medium")
@@ -12,8 +20,7 @@ def load_models():
 
 chatbot, sentiment_analyzer = load_models()
 
-# Set up the Streamlit app
-st.set_page_config(page_title="Mental Health Chatbot", page_icon="💬", layout="centered")
+# App Title and Description
 st.title("💬 Mental Health Chatbot")
 st.markdown("""
 Welcome! I'm here to listen and provide support. Remember, I'm not a substitute for professional help, but I can offer resources and a listening ear.
@@ -32,9 +39,9 @@ def get_chatbot_response(user_input):
     sentiment_label = sentiment['label']
     sentiment_score = sentiment['score']
 
-    # Generate response
+    # Generate response using the chatbot model
     response = chatbot(user_input)[0]['generated_text']
-    
+
     # Tailor response based on sentiment
     if sentiment_label == "NEGATIVE":
         response += " I'm really sorry you're feeling this way. It might help to talk to a trusted person or a mental health professional."
@@ -51,10 +58,10 @@ def sanitize_input(user_input):
     sanitized = re.sub(r'[^\w\s]', '', user_input)
     return sanitized
 
-# User input
+# User input area
 user_input = st.text_input("You:", key="input")
 
-# Send button
+# Send button functionality
 if st.button("Send"):
     if user_input.strip() != "":
         sanitized_input = sanitize_input(user_input)
@@ -63,10 +70,10 @@ if st.button("Send"):
         # Get bot response
         bot_response = get_chatbot_response(sanitized_input)
         st.session_state.conversation.append({"sender": "Bot", "message": bot_response})
-        # Scroll to bottom
+        # Clear the input field after sending the message
         st.experimental_rerun()
 
-# Display conversation
+# Display conversation history
 st.markdown("### Conversation")
 for chat in st.session_state.conversation:
     if chat["sender"] == "You":
@@ -81,7 +88,7 @@ if st.button("Submit Feedback"):
     if feedback:
         st.session_state.feedback.append(feedback)
         st.success("Thank you for your feedback!")
-        # Optionally, reset feedback selection
+        # Reset feedback selection
         st.session_state["feedback"] = ""
     else:
         st.warning("Please select a feedback option.")
@@ -100,4 +107,3 @@ st.markdown("""
 ---
 **Privacy Notice:** This chatbot does not store any personal information. Conversations are not saved and are intended for support purposes only. If you are in crisis, please reach out to a mental health professional or a trusted individual.
 """)
-
