@@ -1,83 +1,103 @@
-import os
-import subprocess
-from threading import Thread
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from transformers import pipeline
-import torch
 import streamlit as st
-import requests
+from transformers import pipeline
+from textblob import TextBlob
+import re
 
-# Set environment variable to disable Hugging Face symlink warning
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Initialize NLP Models
+@st.cache_resource
+def load_models():
+    chatbot = pipeline("conversational", model="microsoft/DialoGPT-medium")
+    sentiment_analyzer = pipeline("sentiment-analysis")
+    return chatbot, sentiment_analyzer
 
-# Initialize FastAPI app
-app = FastAPI()
+chatbot, sentiment_analyzer = load_models()
 
-# Enable CORS to allow frontend to access this backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for testing; restrict in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Set up the Streamlit app
+st.set_page_config(page_title="Mental Health Chatbot", page_icon="💬", layout="centered")
+st.title("💬 Mental Health Chatbot")
+st.markdown("""
+Welcome! I'm here to listen and provide support. Remember, I'm not a substitute for professional help, but I can offer resources and a listening ear.
+""")
 
-# Load the text-generation pipeline for conversational responses
-conversation_pipeline = pipeline("text-generation", model="microsoft/DialoGPT-medium")
+# Initialize session state for conversation history and feedback
+if "conversation" not in st.session_state:
+    st.session_state.conversation = []
+if "feedback" not in st.session_state:
+    st.session_state.feedback = []
 
-@app.post("/chat")
-async def chat(request: Request):
-    data = await request.json()
-    user_message = data.get("message", "")
-    response = conversation_pipeline(user_message, max_length=50, num_return_sequences=1)
-    ai_response = response[0]["generated_text"]
-    return {"response": ai_response}
+# Function to generate chatbot response
+def get_chatbot_response(user_input):
+    # Analyze sentiment
+    sentiment = sentiment_analyzer(user_input)[0]
+    sentiment_label = sentiment['label']
+    sentiment_score = sentiment['score']
 
-# Define the Streamlit UI as a function
-def run_streamlit():
-    st.title("Radiate AI Mental Health Chatbot")
-    st.write("Welcome! Type a message below to chat with our AI support bot.")
+    # Generate response
+    response = chatbot(user_input)[0]['generated_text']
+    
+    # Tailor response based on sentiment
+    if sentiment_label == "NEGATIVE":
+        response += " I'm really sorry you're feeling this way. It might help to talk to a trusted person or a mental health professional."
+    elif sentiment_label == "POSITIVE":
+        response += " That's great to hear! Keep taking care of yourself."
+    else:
+        response += " I'm here to support you. Feel free to share more about how you're feeling."
 
-    # Backend API endpoint URL - This URL will need to be the same as the FastAPI endpoint
-    API_URL = "http://localhost:8000/chat"  # Modify if using an external URL
+    return response
 
-    # Initialize session state for storing chat history
-    if "chat_history" not in st.session_state:
-        st.session_state["chat_history"] = []
+# Function to sanitize user input
+def sanitize_input(user_input):
+    # Remove any unwanted characters or scripts
+    sanitized = re.sub(r'[^\w\s]', '', user_input)
+    return sanitized
 
-    # User input field
-    user_message = st.text_input("You:")
+# User input
+user_input = st.text_input("You:", key="input")
 
-    if user_message:
-        try:
-            # Send message to backend and get the AI response
-            response = requests.post(API_URL, json={"message": user_message})
-            ai_response = response.json().get("response", "Sorry, I didn’t understand that.")
-        except requests.exceptions.RequestException:
-            ai_response = "Error: Could not connect to the server."
+# Send button
+if st.button("Send"):
+    if user_input.strip() != "":
+        sanitized_input = sanitize_input(user_input)
+        # Add user message to conversation
+        st.session_state.conversation.append({"sender": "You", "message": sanitized_input})
+        # Get bot response
+        bot_response = get_chatbot_response(sanitized_input)
+        st.session_state.conversation.append({"sender": "Bot", "message": bot_response})
+        # Scroll to bottom
+        st.experimental_rerun()
 
-        # Update chat history
-        st.session_state["chat_history"].append(("You", user_message))
-        st.session_state["chat_history"].append(("AI", ai_response))
+# Display conversation
+st.markdown("### Conversation")
+for chat in st.session_state.conversation:
+    if chat["sender"] == "You":
+        st.markdown(f"**You:** {chat['message']}")
+    else:
+        st.markdown(f"**Bot:** {chat['message']}")
 
-        # Clear the input field
-        user_message = ""
+# Feedback Section
+st.markdown("### Provide Feedback")
+feedback = st.radio("How helpful was this response?", ("", "⭐️", "⭐️⭐️", "⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️⭐️"))
+if st.button("Submit Feedback"):
+    if feedback:
+        st.session_state.feedback.append(feedback)
+        st.success("Thank you for your feedback!")
+        # Optionally, reset feedback selection
+        st.session_state["feedback"] = ""
+    else:
+        st.warning("Please select a feedback option.")
 
-    # Display chat history
-    for speaker, message in st.session_state["chat_history"]:
-        st.write(f"{speaker}: {message}")
+# Resources Section
+st.markdown("### Helpful Resources")
+st.markdown("""
+- [National Suicide Prevention Lifeline](https://suicidepreventionlifeline.org/) - 1-800-273-TALK (8255)
+- [Crisis Text Line](https://www.crisistextline.org/) - Text HOME to 741741
+- [Mental Health America](https://www.mhanational.org/) - Resources and support
+- [Mind](https://www.mind.org.uk/) - Mental health information and support
+""")
 
-# Run Streamlit in a separate thread
-def start_streamlit():
-    # Start Streamlit as a subprocess
-    subprocess.run(["streamlit", "run", __file__])
-
-# Start the Streamlit thread
-Thread(target=start_streamlit, daemon=True).start()
-
-# Run the FastAPI application if this is the main file
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# Privacy Notice
+st.markdown("""
+---
+**Privacy Notice:** This chatbot does not store any personal information. Conversations are not saved and are intended for support purposes only. If you are in crisis, please reach out to a mental health professional or a trusted individual.
+""")
 
