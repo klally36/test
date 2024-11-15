@@ -1,23 +1,26 @@
 import streamlit as st
+import cv2
+import numpy as np
+import mediapipe as mp
+from PIL import Image
+import tempfile
 
 def main():
     st.set_page_config(page_title="Posture and Scoliosis Assessment Tool", layout="wide")
     st.title("🧍‍♂️ Posture and Scoliosis Assessment Tool")
     st.write("Welcome! This tool will help assess your posture and identify potential issues related to scoliosis.")
 
-    # Initialize Session State for Scoring
     if 'score' not in st.session_state:
         st.session_state.score = 0
     if 'responses' not in st.session_state:
         st.session_state.responses = {}
 
-    # Function to reset the assessment
     def reset_assessment():
         st.session_state.score = 0
         st.session_state.responses = {}
         st.experimental_rerun()
 
-    # Demographic Information
+    # Collect demographic information
     st.header("1. Demographic Information")
     age = st.number_input("What is your age?", min_value=5, max_value=100, value=20, step=1)
     gender = st.radio("What is your gender?", ("Male", "Female", "Prefer not to say", "Other"))
@@ -27,7 +30,7 @@ def main():
 
     st.markdown("---")
 
-    # Symptom Assessment
+    # Collect symptom assessment
     st.header("2. Symptom Assessment")
     pain_present = st.radio("Do you experience any pain in your back or neck?", ("Yes", "No"), key='pain_present')
 
@@ -40,7 +43,7 @@ def main():
 
     st.markdown("---")
 
-    # Medical and Personal History
+    # Collect medical and personal history
     st.header("3. Medical and Personal History")
     previous_diagnosis = st.radio("Have you been previously diagnosed with scoliosis or any other spinal condition?", ("Yes", "No"))
     family_history = st.radio("Is there a family history of scoliosis or spinal issues?", ("Yes", "No"))
@@ -49,7 +52,7 @@ def main():
 
     st.markdown("---")
 
-    # Lifestyle and Ergonomics
+    # Collect lifestyle and ergonomics information
     st.header("4. Lifestyle and Ergonomics")
     screen_time = st.number_input("How many hours per day do you spend sitting or using screens?", min_value=0, max_value=24, value=6, step=1)
     posture_awareness = st.slider("How would you rate your awareness of maintaining good posture?", 1, 10, 5)
@@ -58,7 +61,7 @@ def main():
 
     st.markdown("---")
 
-    # Physical Assessment Indicators
+    # Collect physical assessment indicators
     st.header("5. Physical Assessment Indicators")
     shoulder_alignment = st.radio("Do you notice one shoulder higher than the other?", ("Yes", "No"))
     head_alignment = st.radio("Does your head appear to lean to one side when viewed from the front?", ("Yes", "No"))
@@ -69,7 +72,7 @@ def main():
 
     st.markdown("---")
 
-    # Functional Assessments
+    # Collect functional assessment indicators
     st.header("6. Functional Assessments")
     mobility = st.radio("Do you experience difficulty in moving or performing daily tasks due to your posture?", ("Yes", "No"))
     fatigue = st.radio("Do you often feel fatigued or tired, even without strenuous activity?", ("Yes", "No"))
@@ -78,9 +81,97 @@ def main():
 
     st.markdown("---")
 
-    # Submit Button
+    # Image upload and analysis
+    st.header("7. Image Upload and Analysis")
+    st.write("You can upload a **side view** image of your body to analyze your posture.")
+
+    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+
+    if uploaded_file is not None:
+        # Read the uploaded image
+        image = Image.open(uploaded_file)
+        # Convert the image to RGB
+        image = image.convert('RGB')
+        # Convert to numpy array
+        image_np = np.array(image)
+
+        # Display the uploaded image
+        st.image(image_np, caption='Uploaded Image',  width=400)
+
+        # Process the image and analyze posture
+        with st.spinner('Analyzing image...'):
+            # Initialize Mediapipe
+            mp_drawing = mp.solutions.drawing_utils
+            mp_pose = mp.solutions.pose
+
+            # Convert the image to RGB for Mediapipe
+            image_rgb = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+
+            # Perform pose estimation
+            with mp_pose.Pose(static_image_mode=True, model_complexity=2, enable_segmentation=False) as pose:
+                results = pose.process(image_rgb)
+
+                if results.pose_landmarks:
+                    # Draw pose landmarks on the image
+                    annotated_image = image_np.copy()
+                    mp_drawing.draw_landmarks(
+                        annotated_image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+                    # Display the annotated image
+                    st.image(annotated_image, caption='Analyzed Image',  width=400)
+
+                    # Calculate angles
+                    # For side view, relevant landmarks could be:
+                    # - Shoulder (left/right)
+                    # - Hip (left/right)
+                    # - Knee (left/right)
+                    # Since it's a side view, one side of the body may be more visible.
+
+                    # Get landmark coordinates
+                    landmarks = results.pose_landmarks.landmark
+
+                    # Define function to get coordinates
+                    def get_landmark_coords(landmark):
+                        return [landmark.x, landmark.y]
+
+                    # Choose left side landmarks for side view analysis
+                    shoulder = get_landmark_coords(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER])
+                    hip = get_landmark_coords(landmarks[mp_pose.PoseLandmark.LEFT_HIP])
+                    knee = get_landmark_coords(landmarks[mp_pose.PoseLandmark.LEFT_KNEE])
+
+                    # Calculate angle at hip
+                    def calculate_angle(a, b, c):
+                        a = np.array(a)  # First point
+                        b = np.array(b)  # Middle point
+                        c = np.array(c)  # End point
+
+                        radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
+                        angle = np.abs(radians*180.0/np.pi)
+
+                        if angle > 180.0:
+                            angle = 360 - angle
+
+                        return angle
+
+                    hip_angle = calculate_angle(shoulder, hip, knee)
+
+                    st.write(f"**Hip Angle:** {hip_angle:.2f} degrees")
+
+                    # Analyze hip angle
+                    if hip_angle < 165:
+                        st.write("🔴 **Your hip angle indicates a possible issue with posture.**")
+                        st.session_state.score += 2  # Add to the score
+                    else:
+                        st.write("🟢 **Your hip angle is within a normal range.**")
+
+                else:
+                    st.write("⚠️ No pose landmarks detected. Please upload a clear side or back view image.")
+
+    st.markdown("---")
+
+    # Submit assessment button
     if st.button("Submit Assessment"):
-        # Collect all responses
+        # Store responses in session state
         st.session_state.responses = {
             "age": age,
             "gender": gender,
@@ -110,15 +201,15 @@ def main():
             "mobility": mobility,
             "fatigue": fatigue,
             "breathing": breathing,
-            "balance_issues": balance_issues
+            "balance_issues": balance_issues,
+            "hip_angle": hip_angle if 'hip_angle' in locals() else None
         }
 
-        # Analysis Logic
-        score = 0
+        # Calculate the assessment score
+        score = st.session_state.score
 
-        # Symptom Assessment
         if pain_present == "Yes":
-            score += 2  # Presence of pain adds to the risk
+            score += 2
             if pain_severity >= 7:
                 score += 2
             elif pain_severity >= 4:
@@ -130,7 +221,6 @@ def main():
             if activity_related_pain == "Yes":
                 score += 1
 
-        # Medical and Personal History
         if previous_diagnosis == "Yes":
             score += 3
         if family_history == "Yes":
@@ -140,7 +230,6 @@ def main():
         if physical_activity_level in ["Sedentary", "Lightly active"]:
             score += 1
 
-        # Lifestyle and Ergonomics
         if screen_time > 6:
             score += 1
         if posture_awareness < 5:
@@ -150,7 +239,6 @@ def main():
         if sleeping_position == "Stomach":
             score += 1
 
-        # Physical Assessment Indicators
         if shoulder_alignment == "Yes":
             score += 2
         if head_alignment == "Yes":
@@ -164,7 +252,6 @@ def main():
         if clothes_fit == "Yes":
             score += 1
 
-        # Functional Assessments
         if mobility == "Yes":
             score += 2
         if fatigue == "Yes":
@@ -176,7 +263,7 @@ def main():
 
         st.session_state.score = score
 
-        # Determine Risk Level
+        # Determine risk level
         if score >= 15:
             risk_level = "High"
         elif 8 <= score < 15:
@@ -184,13 +271,11 @@ def main():
         else:
             risk_level = "Low"
 
-        # Generate Report
+        # Display assessment results
         st.success("📄 **Assessment Complete! Please see your report below.**")
-
         st.markdown("### 📊 **Your Posture Assessment Report**")
         st.write(f"**Risk Level:** {risk_level}")
 
-        # Summary of Findings
         st.markdown("#### **Summary of Findings:**")
         if risk_level == "High":
             st.write("You are at **high risk** for posture-related issues or scoliosis. It is strongly recommended to consult a healthcare professional for a comprehensive evaluation.")
@@ -199,7 +284,6 @@ def main():
         else:
             st.write("You are at **low risk** for posture-related issues. Continue maintaining good posture habits to sustain your spinal health.")
 
-        # Recommendations
         st.markdown("#### **Recommendations:**")
 
         if risk_level == "Low":
@@ -217,7 +301,6 @@ def main():
             st.write("- **Targeted Physical Therapy:** Begin physical therapy exercises as recommended by a professional.")
             st.write("- **Lifestyle Adjustments:** Implement significant ergonomic and lifestyle changes to support spinal health.")
 
-        # Safe Exercises Suggestions
         st.markdown("#### **Safe Exercises Suggestions:**")
 
         if risk_level in ["Moderate", "High"]:
@@ -235,14 +318,12 @@ def main():
 
             st.markdown("*Note: Perform all exercises slowly and stop if you experience any pain. Consult with a healthcare professional before starting any new exercise regimen.*")
 
-        # Lifestyle Recommendations
         st.markdown("#### **Lifestyle Recommendations:**")
         if risk_level in ["Moderate", "High"]:
             st.write("- **Ergonomic Adjustments:** Set up your workspace to promote good posture, including chair and desk height adjustments.")
             st.write("- **Movement Breaks:** Take short breaks every 30 minutes to stand, stretch, and move around.")
             st.write("- **Mindfulness Practices:** Incorporate activities like yoga or tai chi to enhance body awareness and posture.")
 
-        # Option to Download Report
         st.markdown("---")
         report = generate_report(risk_level, st.session_state.responses, score)
         st.download_button(
@@ -252,14 +333,13 @@ def main():
             mime="text/plain",
         )
 
-        # Reset Button
         st.button("🔄 Reset Assessment", on_click=reset_assessment)
 
-    # Disclaimer
     st.markdown("---")
     st.warning(
         "**Disclaimer:** This tool provides general information and is not a substitute for professional medical diagnosis or treatment. If you suspect you have scoliosis or any serious posture-related issues, please consult a healthcare professional."
     )
+
 def generate_report(risk_level, responses, score):
     report = f"""
 **Posture and Scoliosis Assessment Report**
@@ -329,3 +409,6 @@ def generate_report(risk_level, responses, score):
     report += "\n---\n\n**Disclaimer:** This report provides general information and is not a substitute for professional medical diagnosis or treatment. If you suspect you have scoliosis or any serious posture-related issues, please consult a healthcare professional."
 
     return report
+
+if __name__ == "__main__":
+    main()
